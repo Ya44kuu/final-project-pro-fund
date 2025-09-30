@@ -39,11 +39,32 @@ void save_all(DB *db,char *file_name){
     printf(BOLD GREEN"Save Complete!!\n"RESET);
     fclose(f);
 }
-void cmp_time(DB *db){
-    int i=0;
-    char *day[Row]; 
-    char *month[Row];
-    char *year[Row]; 
+int ch_time(const char *time ,int *start_m,int *end_m){
+    int s_hr,s_min,ed_hr,ed_min;
+    if(sscanf(time," %d : %d - %d : %d ",&s_hr,&s_min,&ed_hr,&ed_min) != 4) return 0;
+    
+    if(s_hr < 0 || s_hr > 23 || s_min < 0 || s_min > 59 || ed_hr < 0 || ed_hr > 23 || ed_min < 0 || ed_min > 59) return 0;
+    *start_m = s_hr*60 + s_min;
+    *end_m = ed_hr*60 + ed_min;
+    if(*start_m >=  *end_m) return 0;
+    return 1;
+}
+int overlaps(DB *db,const char *name,const char *room,const char *time,const char *date,int exclude_idx){
+    int start1,end1;
+    if (!ch_time(time,&start1,&end1)) return -1;
+    for(int i = 0; i< Row;i++){
+        if (i == exclude_idx) continue;
+        if(db->BookingID[i][0] == '\0') continue;
+        
+        if(strcmp(db->BookingDate[i],date) != 0) continue;
+        if(!(strcmp(db->MeetingRoom[i],room) == 0 || strcmp(db->BookerName[i], name) == 0)) continue;
+
+        int start2,end2;
+        if (!ch_time(db->BookingTime[i],&start2,&end2)) continue;
+        if((start2 < end1) && (start1 < end2)) return 1;
+
+    }
+    return 0;
 
 }
 void trim(char *s){
@@ -134,9 +155,9 @@ void add_user(DB *db,char *file_name){
     printf("-----------------------------------------------------------------\n"RESET);
     printf("Example Format\n");
     printf(CYAN" BookingID,BookerName,MeetingRoom,BookingDate,BookingTime\n");
-    printf(GREEN" [✓] 123,Cristianno Ronaldo,B,11/11/2025,12:00\n"RESET);
-    printf(RED " [✗] 123,Leo,nel,Jessi,B,11,/11/2025,12,00\n"RESET);
-    printf(RED " [✗] 12 3, Lamean Jaamal, B,11 /11/ 2025,12: 00\n"RESET);
+    printf(GREEN" [✓] 123,Cristianno Ronaldo,B,11/11/2025,12:00-13:00\n"RESET);
+    printf(RED " [✗] 123,Leo,nel,Jessi,B,11,/11/2025,12,00-13:00\n"RESET);
+    printf(RED " [✗] 12 3, Lamean Jaamal, B,11 /11/ 2025,12: 00-13:00\n"RESET);
     printf("=================================================================\n"RESET);
     printf(YELLOW"Type Here : "RESET);
 
@@ -182,8 +203,12 @@ void add_user(DB *db,char *file_name){
         if(db->BookingID[i][0]=='\0') continue;
         char *lower_room = to_lower_str(db->MeetingRoom[i]);
 
-        if(strcmp(db->BookingID[i], id)==0){ printf(RED BOLD"Error: Duplicate ID\n" RESET); return; }
-
+        if(strcmp(db->BookingID[i], id)==0){ 
+            printf(RED BOLD"Error: Duplicate ID\n" RESET); 
+            free(lower_room);
+            free(lower_room_stdin);
+            return; 
+        }
         if(strcmp(lower_room,lower_room_stdin)==0 &&
             strcmp(db->BookingDate[i], date)==0 &&
             strcmp(db->BookingTime[i], time)==0){
@@ -203,7 +228,15 @@ void add_user(DB *db,char *file_name){
         }
         free(lower_room);
     }
-    
+    int ovl = overlaps(db,name,room,time,date,-1);
+    if(ovl < 0){
+        printf(BOLD RED"Error:Error: Time format must be HH:MM-HH:MM\n");
+        return;
+    }
+    if (ovl == 1) {
+    printf(RED BOLD"Error: Time overlaps an existing booking in the same room and date\n"RESET);
+    return;
+    }
     int idx = -1;
     for(int i = 0;i<Row;i++){
         if(db->BookingID[i][0] == '\0'){
@@ -216,11 +249,12 @@ void add_user(DB *db,char *file_name){
         free(lower_room_stdin);
         return;
     }
-    snprintf(db->BookingID[idx],20,"%s",id);
-    snprintf(db->BookerName[idx],20,"%s",name);
-    snprintf(db->MeetingRoom[idx],20,"%s",room);
-    snprintf(db->BookingDate[idx],20,"%s",date);
-    snprintf(db->BookingTime[idx],20,"%s",time);
+    
+    snprintf(db->BookingID[idx],   mx_id,  "%s", id);
+    snprintf(db->BookerName[idx],  mx_name,"%s", name);
+    snprintf(db->MeetingRoom[idx], mx_room,"%s", room);
+    snprintf(db->BookingDate[idx], mx_date,"%s", date);
+    snprintf(db->BookingTime[idx], mx_time,"%s", time);
     free(lower_room_stdin);
     save_all(db,file_name);
 }
@@ -235,9 +269,9 @@ void edit_user(DB *db,char *file_name){
     printf("-----------------------------------------------------------------\n"RESET);
     printf( "Example Format\n");
     printf(CYAN" BookingID,BookerName,MeetingRoom,BookingDate,BookingTime\n");
-    printf(GREEN" [✓] 123,Cristianno Ronaldo,B,11/11/2025,12:00\n"RESET);
-    printf(RED " [✗] 123,Leo,nel,Jessi,B,11,/11/2025,12,00\n"RESET);
-    printf(RED " [✗] 12 3, Lamean Jaamal, B,11 /11/ 2025,12: 00\n"RESET);
+    printf(GREEN" [✓] 123,Cristianno Ronaldo,B,11/11/2025,12:00-13:00\n"RESET);
+    printf(RED " [✗] 123,Leo,nel,Jessi,B,11,/11/2025,12,00-13:00\n"RESET);
+    printf(RED " [✗] 12 3, Lamean Jaamal, B,11 /11/ 2025,12: 00-13:00\n"RESET);
     printf("=================================================================\n"RESET);
     printf(YELLOW"Type Here : "RESET);
 
@@ -282,7 +316,12 @@ void edit_user(DB *db,char *file_name){
         if(i == found_idx) continue;
         char *lower_room = to_lower_str(db->MeetingRoom[i]);
 
-        if(strcmp(db->BookingID[i], id)==0){ printf(RED BOLD"Error: Duplicate ID\n" RESET); return; }
+        if(strcmp(db->BookingID[i], id)==0){ 
+            printf(RED BOLD"Error: Duplicate ID\n" RESET); 
+            free(lower_room);
+            free(lower_room_stdin);
+            return; 
+        }
         if(strcmp(lower_room,lower_room_stdin) == 0 &&
             strcmp(db->BookingDate[i], date)==0 &&
             strcmp(db->BookingTime[i], time)==0){
@@ -301,6 +340,15 @@ void edit_user(DB *db,char *file_name){
             return;   
         }
         free(lower_room);
+    }
+    int ovl = overlaps(db,name,room,time,date,found_idx);
+    if(ovl < 0){
+        printf(BOLD RED"Error:Error: Time format must be HH:MM-HH:MM\n");
+        return;
+    }
+    if (ovl == 1) {
+    printf(RED BOLD"Error: Time overlaps an existing booking in the same room and date\n"RESET);
+    return;
     }
     
     
@@ -321,9 +369,11 @@ void delete_user(DB *db,char *file_name){
     scanf("%c",&confirm);
     getchar();
     if( tolower(confirm) == 'y'){
-        for(int i =0 ;i < 20;i++){
-        db->BookingID[found_idx][i] = '\0';db->BookerName[found_idx][i] = '\0';db->MeetingRoom[found_idx][i] = '\0';db->BookingDate[found_idx][i] = '\0';db->BookingTime[found_idx][i] = '\0';
-        }
+        for (int k = 0; k < mx_id;k++) db->BookingID[found_idx][k]   = '\0';
+        for (int k = 0; k < mx_name;k++) db->BookerName[found_idx][k]  = '\0';
+        for (int k = 0; k < mx_room;k++) db->MeetingRoom[found_idx][k] = '\0';
+        for (int k = 0; k < mx_date;k++) db->BookingDate[found_idx][k] = '\0';  
+        for (int k = 0; k < mx_time;k++) db->BookingTime[found_idx][k] = '\0';
         save_all(db,file_name);
     }else if (tolower(confirm) == 'n'){
         return;
@@ -367,7 +417,6 @@ void load_file(DB *db,char *file_name) {
             count_row++;
         }
     }
-    cmp_time(db);
     fclose(f);
 }
 static void clear_screen() {
@@ -402,7 +451,7 @@ void display(DB *db,char *csv){
             case 4:search_user(db); break;
             case 0:running = 0; break;
             default:
-            printf("Error: Not macth number\n");
+            printf(BOLD RED"Error: Not macth number\n"RESET);
 
         }
         

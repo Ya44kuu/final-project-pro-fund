@@ -27,6 +27,7 @@ typedef struct {
     char MeetingRoom[Row][mx_room];
     char BookingDate[Row][mx_date];
     char BookingTime[Row][mx_time];
+    char tmpo[10][mx_name];
 } DB;
 void save_all(DB *db,char *file_name){
     FILE *f = fopen(file_name,"w");
@@ -39,6 +40,19 @@ void save_all(DB *db,char *file_name){
     printf(BOLD GREEN"Save Complete!!\n"RESET);
     fclose(f);
 }
+char* to_lower_str(const char *s){
+    if(!s) return NULL;
+    size_t n = strlen(s);
+    char *lower = (char*)malloc(n + 1);
+    if (!lower) return NULL; 
+    for(size_t i = 0; i < n;i++){
+        lower[i] = tolower((unsigned char)s[i]);
+    }
+    lower[n] = '\0';
+    return lower;
+
+}
+
 int ch_time(const char *time ,int *start_m,int *end_m){
     int s_hr,s_min,ed_hr,ed_min;
     if(sscanf(time," %d : %d - %d : %d ",&s_hr,&s_min,&ed_hr,&ed_min) != 4) return 0;
@@ -52,18 +66,51 @@ int ch_time(const char *time ,int *start_m,int *end_m){
 int overlaps(DB *db,const char *name,const char *room,const char *time,const char *date,int exclude_idx){
     int start1,end1;
     if (!ch_time(time,&start1,&end1)) return -1;
+    char *lower_search = to_lower_str(name);
+    char *lower_search_room = to_lower_str(room);
+
+    if (!lower_search || !lower_search_room){
+        free(lower_search); free(lower_search_room);
+        return -1;
+    }
+
     for(int i = 0; i< Row;i++){
         if (i == exclude_idx) continue;
         if(db->BookingID[i][0] == '\0') continue;
-        
         if(strcmp(db->BookingDate[i],date) != 0) continue;
-        if(!(strcmp(db->MeetingRoom[i],room) == 0 || strcmp(db->BookerName[i], name) == 0)) continue;
 
+        char *lower_name = to_lower_str(db->BookerName[i]);
+        char *lower_room = to_lower_str(db->MeetingRoom[i]);
+
+        if (!lower_name || !lower_room) {
+            free(lower_name);
+            free(lower_room);
+            continue; 
+        }
+        if(!(strcmp(lower_room,lower_search_room) == 0 || strcmp(lower_name, lower_search) == 0)) {
+            free(lower_name);
+            free(lower_room);
+            continue;
+        }
         int start2,end2;
-        if (!ch_time(db->BookingTime[i],&start2,&end2)) continue;
-        if((start2 < end1) && (start1 < end2)) return 1;
+        if (!ch_time(db->BookingTime[i],&start2,&end2)) {
+            free(lower_name); 
+            free(lower_room);
 
+            continue;
+        }
+        if((start2 < end1) && (start1 < end2)) {
+            free(lower_name);
+            free(lower_room);
+            free(lower_search_room);
+            free(lower_search);
+            return 1;
+        }
+        free(lower_name);
+        free(lower_room);
     }
+    free(lower_search_room);
+    free(lower_search);
     return 0;
 
 }
@@ -80,28 +127,86 @@ int space_check(char *s){
     return strchr(s, ' ') != NULL;
 
 }
-char* to_lower_str(const char *s){
-    if(!s) return NULL;
-    size_t n = strlen(s);
-    char *lower = (char*)malloc(n + 1);
-    if (!lower) return NULL; 
-    for(size_t i = 0; i < n;i++){
-        lower[i] = tolower((unsigned char)s[i]);
+int stdin_edit_add(DB *db){
+    char id[mx_id] ,name[mx_name], room[mx_room],date[mx_date],time[mx_time];
+    printf("------------------------------------------\n");
+    printf(YELLOW"Enter your ID: "RESET);
+    scanf("%s",id);
+    getchar();
+
+    printf(YELLOW"Enter your Name: "RESET);
+    fgets(name, sizeof(name), stdin);
+    name[strcspn(name, "\n")] = '\0';
+
+    printf(YELLOW"Enter your Room: "RESET);
+    scanf("%s",room);
+
+    printf("Ex."RESET);
+    printf("12/12/2025\n");
+    printf(YELLOW"Enter your Date: "RESET);
+    scanf("%s",date);
+
+    printf("Ex."RESET);
+    printf("13:00-14:00\n");
+    printf(YELLOW"Enter your Period: "RESET);
+    scanf("%s",time);
+
+    trim(id); trim(name); trim(room); trim(date); trim(time);   
+
+    snprintf(db->tmpo[0],mx_id,"%s",id);           
+    snprintf(db->tmpo[1],mx_name,"%s",name);           
+    snprintf(db->tmpo[2],mx_room,"%s",room);    
+    snprintf(db->tmpo[3],mx_date,"%s",date);           
+    snprintf(db->tmpo[4],mx_time,"%s",time);
+
+    for(int i = 0 ;i<5;i++){
+        if(db->tmpo[i][0] == '\0'){
+            return 0;
+        }
     }
-    lower[n] = '\0';
-    return lower;
+
+    return 1;
+}
+int stdin_sch(DB *db){
+    char name[mx_name]; 
+    printf(YELLOW"Search by name:"RESET);
+    fgets(name, sizeof(name), stdin);
+    name[strcspn(name, "\n")] = '\0';
+    trim(name);
+    snprintf(db->tmpo[0],mx_name,"%s",name);
+
+    if(db->tmpo[0][0] == '\0'){
+        return 0;
+    }
+    return 1;
+    
+}
+int stdin_id_match(DB *db){
+    char buf[mx_id];
+    printf("---------------------------------------------------------------------\n");
+    printf("Press Enter (or 'q') to cancel.\n");
+    printf(YELLOW "type ID of data you want to use: " RESET);
+    fgets(buf, sizeof(buf), stdin);
+    buf[strcspn(buf, "\n")] = '\0';
+    trim(buf);
+    if (buf[0] == '\0' || buf[0]=='q' || buf[0]=='Q') return 0;
+    snprintf(db->tmpo[0], mx_id, "%s", buf);
+    return 1;
+}
+char comfirm_pms(){
+    char c;
+    printf("Are You Sure? You Want To Delete This Data(y/n) ");
+    if (scanf(" %c", &c) != 1) return 'n';
+    return c;
 
 }
 int search_user(DB *db){
-    char search_name[mx_name]; 
     int found_idx[Row];
     found_idx[0] = -1;
     int idx = 0;
-    printf(YELLOW"Search By Name: "RESET);
-    fgets(search_name,sizeof(search_name),stdin);
-    search_name[strcspn(search_name,"\n")] = '\0';
-    trim(search_name);
-    char *lower_search = to_lower_str(search_name);
+    int name_sch = stdin_sch(db);
+    if(name_sch == 0) return -1;
+    char *lower_search = to_lower_str(db->tmpo[0]);
     for(int i = 0; i < Row;i++){
         if(db->BookerName[i][0] == '\0') continue;
         char *lower_name = to_lower_str(db->BookerName[i]);
@@ -122,17 +227,15 @@ int search_user(DB *db){
         return k;
 
     }
-    char id_pick[20];
     printf(BOLD GREEN"here is your result\n"RESET);
     for(int i = 0;i < idx;i++){
         int k = found_idx[i];
         printf("(%d)%s,%s,%s,%s,%s (found at row %d)\n",i+1,db->BookingID[k],db->BookerName[k],db->MeetingRoom[k],db->BookingDate[k],db->BookingTime[k],k);      
     }
-    printf("---------------------------------------------------------------------\n");
-    printf("Press Enter (or 'q') to cancel.\n");
-    printf(YELLOW"type ID of data you want to use "RESET);
-    fgets(id_pick,sizeof(id_pick),stdin);
-    id_pick[strcspn(id_pick,"\n")] = '\0';
+    
+    int sch_id = stdin_id_match(db);
+    if(sch_id == 0) return -1;
+    char *id_pick = db->tmpo[0];
     if (id_pick[0] == '\0' || id_pick[0] == 'q' || id_pick[0] == 'Q') {
         printf(BOLD RED"Canceled.\n"RESET);
         return -1;
@@ -148,37 +251,15 @@ int search_user(DB *db){
     
 }
 void add_user(DB *db,char *file_name){
-    char tmp[1024];
-    printf("=================================================================\n"RESET);
-    printf(" **NOTE Spaces allowed only in Name And No Comma In Field**\n"RESET);
-    printf( " **IMPORTANT Use Comma(,) To Cut Collumns**\n"RESET);
-    printf("-----------------------------------------------------------------\n"RESET);
-    printf("Example Format\n");
-    printf(CYAN" BookingID,BookerName,MeetingRoom,BookingDate,BookingTime\n");
-    printf(GREEN" [✓] 123,Cristianno Ronaldo,B,11/11/2025,12:00-13:00\n"RESET);
-    printf(RED " [✗] 123,Leo,nel,Jessi,B,11,/11/2025,12,00-13:00\n"RESET);
-    printf(RED " [✗] 12 3, Lamean Jaamal, B,11 /11/ 2025,12: 00-13:00\n"RESET);
-    printf("=================================================================\n"RESET);
-    printf(YELLOW"Type Here : "RESET);
+    int inputs = stdin_edit_add(db);
+    if(inputs == 0) return;
 
-    fgets(tmp,sizeof(tmp),stdin);
-    tmp[strcspn(tmp,"\n")] = '\0';
-    int comma_count = 0;
-    for(int i = 0;tmp[i] != '\0';i++){
-        if(tmp[i] == ','){
-            comma_count += 1;
-        }
-    }
-    if(comma_count != 4){
-        printf(BOLD RED"Error: Need exactly 5 fields (4 commas)\n"RESET);
-        return;
-    }
-    char *id = strtok(tmp,",");
-    char *name = strtok(NULL,",");
-    char *room = strtok(NULL,",");
-    char *date = strtok(NULL,",");
-    char *time = strtok(NULL,",");
-    trim(id); trim(name); trim(room); trim(date); trim(time);
+    char *id = db->tmpo[0];
+    char *name = db->tmpo[1];
+    char *room = db->tmpo[2];
+    char *date = db->tmpo[3];
+    char *time = db->tmpo[4];
+
     //เช็คช่องว่าง
     char *nullcheck[] = {id,name,room,date,time};
     for(int i = 0;i < 5;i++){
@@ -198,35 +279,15 @@ void add_user(DB *db,char *file_name){
     //เช็คซ้ำ
 
     
-    char *lower_room_stdin = to_lower_str(room);
     for(int i=0;i<Row;i++){
         if(db->BookingID[i][0]=='\0') continue;
-        char *lower_room = to_lower_str(db->MeetingRoom[i]);
 
         if(strcmp(db->BookingID[i], id)==0){ 
             printf(RED BOLD"Error: Duplicate ID\n" RESET); 
-            free(lower_room);
-            free(lower_room_stdin);
             return; 
         }
-        if(strcmp(lower_room,lower_room_stdin)==0 &&
-            strcmp(db->BookingDate[i], date)==0 &&
-            strcmp(db->BookingTime[i], time)==0){
-            printf(RED BOLD"Error: Time Slot Already Taken\n" RESET);
-            free(lower_room);
-            free(lower_room_stdin);
-            return;
-        }
         
-        if (strcmp(db->BookerName[i],  name) == 0 &&
-            strcmp(db->BookingDate[i], date) == 0 &&
-            strcmp(db->BookingTime[i], time) == 0) {
-            printf(RED BOLD"Error: You Can't Reserve More Than One Room In Same Time\n" RESET);
-            free(lower_room_stdin);
-            free(lower_room);
-            return;   
-        }
-        free(lower_room);
+        
     }
     int ovl = overlaps(db,name,room,time,date,-1);
     if(ovl < 0){
@@ -246,7 +307,6 @@ void add_user(DB *db,char *file_name){
     }
     if (idx == -1){
         printf(BOLD RED"Error: Storage Full\n"RESET);
-        free(lower_room_stdin);
         return;
     }
     
@@ -255,45 +315,21 @@ void add_user(DB *db,char *file_name){
     snprintf(db->MeetingRoom[idx], mx_room,"%s", room);
     snprintf(db->BookingDate[idx], mx_date,"%s", date);
     snprintf(db->BookingTime[idx], mx_time,"%s", time);
-    free(lower_room_stdin);
     save_all(db,file_name);
 }
 void edit_user(DB *db,char *file_name){
     printf(CYAN"Welcome To Edit User\n");
     int found_idx = search_user(db);
     if (found_idx < 0) return;
-    char tmp[1024];
-    printf("=================================================================\n"RESET);
-    printf(" **NOTE Spaces allowed only in Name And No Comma In Field**\n"RESET);
-    printf( " **IMPORTANT Use Comma(,) To Cut Collumns**\n"RESET);
-    printf("-----------------------------------------------------------------\n"RESET);
-    printf( "Example Format\n");
-    printf(CYAN" BookingID,BookerName,MeetingRoom,BookingDate,BookingTime\n");
-    printf(GREEN" [✓] 123,Cristianno Ronaldo,B,11/11/2025,12:00-13:00\n"RESET);
-    printf(RED " [✗] 123,Leo,nel,Jessi,B,11,/11/2025,12,00-13:00\n"RESET);
-    printf(RED " [✗] 12 3, Lamean Jaamal, B,11 /11/ 2025,12: 00-13:00\n"RESET);
-    printf("=================================================================\n"RESET);
-    printf(YELLOW"Type Here : "RESET);
 
-    fgets(tmp,sizeof(tmp),stdin);
-    tmp[strcspn(tmp,"\n")] = '\0';
-    int comma_count = 0;
-    for(int i = 0;tmp[i] != '\0';i++){
-        if(tmp[i] == ','){
-            comma_count += 1;
-        }
-    }
-    if(comma_count != 4){
-        printf(BOLD RED"Error: Need exactly 5 fields (4 commas)\n"RESET);
-        return;
-    }
-    char *id = strtok(tmp,",");
-    char *name = strtok(NULL,",");
-    char *room = strtok(NULL,",");
-    char *date = strtok(NULL,",");
-    char *time = strtok(NULL,",");
-    trim(id); trim(name); trim(room); trim(date); trim(time);
     //เช็คช่องว่าง
+    int inputs = stdin_edit_add(db);
+    if(inputs == 0) return;
+    char *id = db->tmpo[0];
+    char *name = db->tmpo[1];
+    char *room = db->tmpo[2];
+    char *date = db->tmpo[3];
+    char *time = db->tmpo[4];
     char *nullcheck[] = {id,name,room,date,time};
     for(int i = 0;i < 5;i++){
         if((nullcheck[i] == NULL)){
@@ -310,36 +346,14 @@ void edit_user(DB *db,char *file_name){
         return;
     }
     //เช็คซ้ำ
-    char *lower_room_stdin = to_lower_str(room);
     for(int i=0;i<Row;i++){
         if(db->BookingID[i][0]=='\0') continue;
         if(i == found_idx) continue;
-        char *lower_room = to_lower_str(db->MeetingRoom[i]);
 
         if(strcmp(db->BookingID[i], id)==0){ 
             printf(RED BOLD"Error: Duplicate ID\n" RESET); 
-            free(lower_room);
-            free(lower_room_stdin);
             return; 
         }
-        if(strcmp(lower_room,lower_room_stdin) == 0 &&
-            strcmp(db->BookingDate[i], date)==0 &&
-            strcmp(db->BookingTime[i], time)==0){
-            printf(RED BOLD"Error: Time Slot Already Taken\n" RESET);
-            free(lower_room);
-            free(lower_room_stdin);
-            return;
-        }
-        
-        if (strcmp(db->BookerName[i],  name) == 0 &&
-            strcmp(db->BookingDate[i], date) == 0 &&
-            strcmp(db->BookingTime[i], time) == 0) {
-            printf(RED BOLD"Error: You Can't Reserve More Than One Room In Same Time\n" RESET);
-            free(lower_room_stdin);
-            free(lower_room);
-            return;   
-        }
-        free(lower_room);
     }
     int ovl = overlaps(db,name,room,time,date,found_idx);
     if(ovl < 0){
@@ -357,18 +371,15 @@ void edit_user(DB *db,char *file_name){
     snprintf(db->MeetingRoom[found_idx],mx_room,"%s",room);
     snprintf(db->BookingDate[found_idx],mx_date,"%s",date);
     snprintf(db->BookingTime[found_idx],mx_time,"%s",time);
-    free(lower_room_stdin);
 
     save_all(db,file_name);
 }
 void delete_user(DB *db,char *file_name){
     int found_idx = search_user(db);
     if(found_idx == -1) return;
-    char confirm;
-    printf("Are You Sure? You Want To Delete This Data(y/n)");
-    scanf("%c",&confirm);
-    getchar();
-    if( tolower(confirm) == 'y'){
+    char confirm = comfirm_pms();
+    if(isspace((unsigned char)confirm)) return;
+    if(tolower(confirm) == 'y'){
         for (int k = 0; k < mx_id;k++) db->BookingID[found_idx][k]   = '\0';
         for (int k = 0; k < mx_name;k++) db->BookerName[found_idx][k]  = '\0';
         for (int k = 0; k < mx_room;k++) db->MeetingRoom[found_idx][k] = '\0';
@@ -408,6 +419,11 @@ void load_file(DB *db,char *file_name) {
         char *room = strtok(NULL,",");
         char *date = strtok(NULL,",");
         char *time = strtok(NULL,",");
+
+        if (!id || !name || !room || !date || !time) continue; 
+
+        trim(id); trim(name); trim(room); trim(date); trim(time);
+
         if(count_row < Row){
             snprintf(db->BookingID[count_row],mx_id,"%s",id);
             snprintf(db->BookerName[count_row],mx_name,"%s",name);
@@ -425,7 +441,7 @@ static void clear_screen() {
 }
 
 static int menu_once(void) {
-    printf(BOLD CYAN"Wellcome To csv Manger\n"RESET);
+    printf(BOLD CYAN"Welcome To CSV Manager\n"RESET);
     printf("---------------------------------------------\n");
     printf("(1) Add user\n");
     printf("(2) Edit user\n");
@@ -439,6 +455,7 @@ static int menu_once(void) {
     getchar();
     return choice;
 }
+
 void display(DB *db,char *csv){
     int running = 1;
     while(running){

@@ -1,45 +1,64 @@
-#include<stdio.h>
-#include<ctype.h>
-#include<string.h>
-#include<stdlib.h>
-#define Row 1000
-#define mx_id 20
-#define mx_room 10
-#define mx_name 64
-#define mx_date 12
-#define mx_time 20
+﻿#include "booking.h"
+
+#ifdef _WIN32
+#include <windows.h>
+void enable_vt_mode(void) {
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut == INVALID_HANDLE_VALUE) return;
+    DWORD mode = 0;
+    if (!GetConsoleMode(hOut, &mode)) return;
+    mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    SetConsoleMode(hOut, mode);
+}
+#endif
+
+int ensure_field_fits(const char *value, size_t cap, const char *label, const char *context) {
+    if (!value) {
+        printf(BOLD RED "Error(%s): %s is missing\n" RESET, context, label);
+        return 0;
+    }
+    size_t len = strlen(value);
+    if (len >= cap) {
+        printf(BOLD RED "Error(%s): %s must be at most %zu characters\n" RESET, context, label, cap - 1);
+        return 0;
+    }
+    return 1;
+}
+
+void store_field(char *dest, size_t cap, const char *value) {
+    if (!dest || !value) return;
+    snprintf(dest, cap, "%.*s", (int)(cap - 1), value);
+}
 
 
-#define BOLD "\033[1m"
-#define BLUE "\033[38;2;82;59;255m"
-#define CYAN "\033[36m"
-#define RESET "\033[0m"
-#define MAGENTA "\033[35m"
-#define RED "\033[31m"
-#define YELLOW "\033[38;5;228m"
-#define GREEN "\033[32m"
-#define WHITE "\033[37m"
 
-
-typedef struct {
-    char BookingID[Row][mx_id];
-    char BookerName[Row][mx_name];
-    char MeetingRoom[Row][mx_room];
-    char BookingDate[Row][mx_date];
-    char BookingTime[Row][mx_time];
-    char tmpo[10][mx_name];
-} DB;
 void save_all(DB *db,char *file_name){
     FILE *f = fopen(file_name,"w");
     if (!f) { perror("open write"); return; }
     fprintf(f,"BookingID,BookerName,MeetingRoom,BookingDate,BookingTime\n");
     for(int i = 0;i<Row;i++){
         if(db->BookingID[i][0] == '\0') continue;
-        fprintf(f,"%s,%s,%s,%s,%s\n",db->BookingID[i],db->BookerName[i],db->MeetingRoom[i],db->BookingDate[i],db->BookingTime[i]);
+        fprintf(f,"%s,%s,%s,%s,%s\n",
+                db->BookingID[i],
+                db->BookerName[i],
+                db->MeetingRoom[i],
+                db->BookingDate[i],
+                db->BookingTime[i]);
     }
     printf(BOLD GREEN"Save Complete!!\n"RESET);
     fclose(f);
 }
+
+void show_log(const DB *db){ int W_ID=mx_id, W_NAME=mx_name, W_ROOM=mx_room, W_DATE=mx_date, W_TIME=mx_time; 
+    printf("\n-----------------------------------------------------------------------------------------------------------------------------------\n");
+     printf("%-*s | %-*s | %-*s | %-*s | %-*s\n", W_ID, "BookingID", W_NAME,"BookerName", W_ROOM,"MeetingRoom", W_DATE,"BookingDate", W_TIME,"BookingTime");
+      printf("------------------------------------------------------------------------------------------------------------------------------------\n");
+       for (int i=0;i<Row;i++){ 
+            if (db->BookingID[i][0]=='\0') continue; 
+                printf("%-*.*s | %-*.*s | %-*.*s | %-*.*s | %-*.*s\n", W_ID, W_ID, db->BookingID[i], W_NAME,W_NAME,db->BookerName[i],
+                W_ROOM,W_ROOM,db->MeetingRoom[i], W_DATE,W_DATE,db->BookingDate[i], W_TIME,W_TIME,db->BookingTime[i]);
+            } 
+            printf("------------------------------------------------------------------------------------------------------------------------------------\n"); }
 char* to_lower_str(const char *s){
     if(!s) return NULL;
     size_t n = strlen(s);
@@ -52,6 +71,14 @@ char* to_lower_str(const char *s){
     return lower;
 
 }
+typedef struct { int idx, s, e; } Slot;
+
+int cmp_slot(const void *a, const void *b){
+    const Slot *A = (const Slot*)a, *B = (const Slot*)b;
+    return (A->s - B->s);
+}
+
+
 
 int ch_time(const char *time ,int *start_m,int *end_m){
     int s_hr,s_min,ed_hr,ed_min;
@@ -114,6 +141,128 @@ int overlaps(DB *db,const char *name,const char *room,const char *time,const cha
     return 0;
 
 }
+
+int parse_date_ddmmyyyy(const char *s, struct tm *out_tm, time_t *out_midnight) {
+    int d, m, y;
+    if (!s || sscanf(s, " %d / %d / %d ", &d, &m, &y) != 3) return 0;
+    if (y < 1900 || m < 1 || m > 12 || d < 1) return 0;
+
+    struct tm t = {0};
+    t.tm_year = y - 1900;
+    t.tm_mon  = m - 1;
+    t.tm_mday = d;
+    t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
+    t.tm_isdst = -1;
+
+    time_t tt = mktime(&t);
+    if (tt == (time_t)-1) return 0;
+
+    
+    struct tm *chk = localtime(&tt);
+    if (!chk) return 0;
+    if (chk->tm_year != t.tm_year || chk->tm_mon != t.tm_mon || chk->tm_mday != t.tm_mday) return 0;
+
+    if (out_tm) *out_tm = *chk;
+    if (out_midnight) *out_midnight = tt;
+    return 1;
+}
+
+int validate_booking_datetime(const char *date_str, const char *time_str, char *err, size_t errsz) {
+
+    int start_m, end_m;
+    if (!ch_time(time_str, &start_m, &end_m)) {
+        snprintf(err, errsz, "Time format must be HH:MM-HH:MM and Time start < Time end");
+        return 1;
+    }
+
+    time_t now = time(NULL);
+    if (now == (time_t)-1) {
+        snprintf(err, errsz, "Unable to read current time");
+        return 2;
+    }
+    struct tm now_tm;
+    #ifdef _WIN32
+        localtime_s(&now_tm, &now);
+    #else
+        localtime_r(&now, &now_tm);
+    #endif
+
+   
+    struct tm today0 = now_tm;
+    today0.tm_hour = today0.tm_min = today0.tm_sec = 0;
+    today0.tm_isdst = -1;
+    time_t today_midnight = mktime(&today0);
+
+    
+    struct tm book_tm;
+    time_t book_midnight;
+    if (!parse_date_ddmmyyyy(date_str, &book_tm, &book_midnight)) {
+        snprintf(err, errsz, "The date format must be dd/mm/yyyy and must be an actual day.");
+        return 3;
+    }
+
+    //ห้ามย้อนหลัง (ก่อนเที่ยงคืนวันนี้)
+    if (book_midnight < today_midnight) {
+        snprintf(err, errsz, "Cannot book in the past");
+        return 4;
+    }
+
+    
+    const time_t three_days = 3 * 24 * 60 * 60; 
+    if (book_midnight - today_midnight > three_days) {
+        snprintf(err, errsz, "You Can Reserve A Meeting Room No More Than 3 Days In Advance");
+        return 5;
+    }
+
+    
+    int today_ymd = (now_tm.tm_year==book_tm.tm_year) && (now_tm.tm_yday==book_tm.tm_yday);
+    if (today_ymd) {
+        int now_min = now_tm.tm_hour * 60 + now_tm.tm_min;
+        if (start_m < now_min) {
+            snprintf(err, errsz, "If booking today, the start time must be >= current time");
+            return 6;
+        }
+    }
+
+    
+    if (errsz) err[0] = '\0';
+    return 0;
+}
+void show_bookings_for(const DB *db, const char *date, const char *room){
+    Slot slots[Row]; int n = 0;
+    char *room_l = to_lower_str(room);
+    if (!room_l) return;
+
+    for (int i = 0; i < Row; i++){
+        if (db->BookingID[i][0] == '\0') continue;
+        if (strcmp(db->BookingDate[i], date) != 0) continue;
+
+        char *r = to_lower_str(db->MeetingRoom[i]);
+        if (!r) continue;
+
+        int s, e;
+        if (strcmp(r, room_l) == 0 && ch_time(db->BookingTime[i], &s, &e)){
+            slots[n++] = (Slot){ i, s, e };
+        }
+        free(r);
+    }
+    free(room_l);
+
+    printf(CYAN "---- Booked for room %s on %s ----\n" RESET, room, date);
+    if (n == 0){
+        printf(GREEN "(no bookings yet)\n" RESET);
+        return;
+    }
+    qsort(slots, n, sizeof(Slot), cmp_slot);
+    for (int k = 0; k < n; k++){
+        int i = slots[k].idx;
+        printf("%-13s | %-20s | ID:%s\n",
+               db->BookingTime[i],
+               db->BookerName[i],
+               db->BookingID[i]);
+    }
+    printf("-----------------------------------\n");
+}
 void trim(char *s){
     if (!s) return;
     size_t n = strlen(s);
@@ -131,27 +280,35 @@ int stdin_edit_add(DB *db){
     char id[mx_id] ,name[mx_name], room[mx_room],date[mx_date],time[mx_time];
     printf("------------------------------------------\n");
     printf(YELLOW"Enter your ID: "RESET);
-    scanf("%s",id);
+    scanf("%19s",id);
     getchar();
 
     printf(YELLOW"Enter your Name: "RESET);
     fgets(name, sizeof(name), stdin);
     name[strcspn(name, "\n")] = '\0';
 
+    printf("-There Is 4 Room You Can Reserve \"A B C D\" \n");
+    printf("-Inputs Can be Upper And Lower letter\n");
+    printf("Ex. A or a\n"RESET);
     printf(YELLOW"Enter your Room: "RESET);
-    scanf("%s",room);
-
+    scanf("%9s",room);
+    
+    printf("-You Can Reserve A Meeting Room No More Than 3 Days In Advance\n");
     printf("Ex."RESET);
-    printf("12/12/2025\n");
+    printf("3/12/2025\n");
     printf(YELLOW"Enter your Date: "RESET);
-    scanf("%s",date);
+    scanf("%11s",date);
 
+    trim(room); trim(date);
+    show_bookings_for(db, date, room);
+
+    printf("-Meeting Room Open 24 Hour\n");
     printf("Ex."RESET);
     printf("13:00-14:00\n");
     printf(YELLOW"Enter your Period: "RESET);
-    scanf("%s",time);
+    scanf("%19s",time);
 
-    trim(id); trim(name); trim(room); trim(date); trim(time);   
+    trim(id); trim(name); trim(time);   
 
     snprintf(db->tmpo[0],mx_id,"%s",id);           
     snprintf(db->tmpo[1],mx_name,"%s",name);           
@@ -259,7 +416,27 @@ void add_user(DB *db,char *file_name){
     char *room = db->tmpo[2];
     char *date = db->tmpo[3];
     char *time = db->tmpo[4];
+    //เช็ค id เป็นเลขไหม
+    if (!*id) return;     
+    if(!(strspn(id, "0123456789") == strlen(id))){
+        printf(BOLD RED"Error: ID must be number\n");
+        return;
+    }
 
+    //เช็คความถูกต้องของห้อง
+    int valid_room = 0;
+    char *input= to_lower_str(room);
+    if (input) {
+    if (strcmp(input, "a") == 0 || strcmp(input, "b") == 0 ||
+        strcmp(input, "c") == 0 || strcmp(input, "d") == 0) {
+        valid_room = 1;
+    }
+    free(input);
+    }
+    if (!valid_room) {
+    printf(BOLD RED "Error: Not Match Room\n" RESET);
+    return;
+    }
     //เช็คช่องว่าง
     char *nullcheck[] = {id,name,room,date,time};
     for(int i = 0;i < 5;i++){
@@ -289,9 +466,22 @@ void add_user(DB *db,char *file_name){
         
         
     }
+    if (!ensure_field_fits(id, mx_id, "ID", "add_user") ||
+        !ensure_field_fits(name, mx_name, "Name", "add_user") ||
+        !ensure_field_fits(room, mx_room, "Room", "add_user") ||
+        !ensure_field_fits(date, mx_date, "Date", "add_user") ||
+        !ensure_field_fits(time, mx_time, "Time", "add_user")) {
+        return;
+    }
+    char err[128];
+    int v = validate_booking_datetime(date, time, err, sizeof(err) );
+    if (v != 0) {
+        printf(BOLD RED "Error: %s\n" RESET, err);
+        return;
+    }
     int ovl = overlaps(db,name,room,time,date,-1);
     if(ovl < 0){
-        printf(BOLD RED"Error:Error: Time format must be HH:MM-HH:MM\n");
+        printf(BOLD RED"Error: Time format must be HH:MM-HH:MM\n");
         return;
     }
     if (ovl == 1) {
@@ -310,11 +500,11 @@ void add_user(DB *db,char *file_name){
         return;
     }
     
-    snprintf(db->BookingID[idx],   mx_id,  "%s", id);
-    snprintf(db->BookerName[idx],  mx_name,"%s", name);
-    snprintf(db->MeetingRoom[idx], mx_room,"%s", room);
-    snprintf(db->BookingDate[idx], mx_date,"%s", date);
-    snprintf(db->BookingTime[idx], mx_time,"%s", time);
+    store_field(db->BookingID[idx],   mx_id,  id);
+    store_field(db->BookerName[idx],  mx_name, name);
+    store_field(db->MeetingRoom[idx], mx_room, room);
+    store_field(db->BookingDate[idx], mx_date, date);
+    store_field(db->BookingTime[idx], mx_time, time);
     save_all(db,file_name);
 }
 void edit_user(DB *db,char *file_name){
@@ -322,7 +512,7 @@ void edit_user(DB *db,char *file_name){
     int found_idx = search_user(db);
     if (found_idx < 0) return;
 
-    //เช็คช่องว่าง
+   
     int inputs = stdin_edit_add(db);
     if(inputs == 0) return;
     char *id = db->tmpo[0];
@@ -330,6 +520,28 @@ void edit_user(DB *db,char *file_name){
     char *room = db->tmpo[2];
     char *date = db->tmpo[3];
     char *time = db->tmpo[4];
+
+    //เช็คว่า id เป็นเลขไหม
+    if (!*id) return;     
+    if(!(strspn(id, "0123456789") == strlen(id))){
+        printf(BOLD RED"Error: ID must be number\n");
+        return;
+    }    
+    //เช็คความถูกต้องของห้อง
+    int valid_room = 0;
+    char *input= to_lower_str(room);
+    if (input) {
+    if (strcmp(input, "a") == 0 || strcmp(input, "b") == 0 ||
+        strcmp(input, "c") == 0 || strcmp(input, "d") == 0) {
+        valid_room = 1;
+    }
+    free(input);
+    }
+    if (!valid_room) {
+    printf(BOLD RED "Error: Not Match Room\n" RESET);
+    return;
+    }
+     //เช็คช่องว่าง
     char *nullcheck[] = {id,name,room,date,time};
     for(int i = 0;i < 5;i++){
         if((nullcheck[i] == NULL)){
@@ -355,6 +567,19 @@ void edit_user(DB *db,char *file_name){
             return; 
         }
     }
+    if (!ensure_field_fits(id, mx_id, "ID", "add_user") ||
+        !ensure_field_fits(name, mx_name, "Name", "add_user") ||
+        !ensure_field_fits(room, mx_room, "Room", "add_user") ||
+        !ensure_field_fits(date, mx_date, "Date", "add_user") ||
+        !ensure_field_fits(time, mx_time, "Time", "add_user")) {
+        return;
+    }
+    char err[128];
+    int v = validate_booking_datetime(date, time, err, sizeof(err));
+    if (v != 0) {
+        printf(BOLD RED "Error: %s\n" RESET, err);
+        return;
+    }
     int ovl = overlaps(db,name,room,time,date,found_idx);
     if(ovl < 0){
         printf(BOLD RED"Error:Error: Time format must be HH:MM-HH:MM\n");
@@ -364,13 +589,12 @@ void edit_user(DB *db,char *file_name){
     printf(RED BOLD"Error: Time overlaps an existing booking in the same room and date\n"RESET);
     return;
     }
-    
-    
-    snprintf(db->BookingID[found_idx],mx_id,"%s",id);
-    snprintf(db->BookerName[found_idx],mx_name,"%s",name);
-    snprintf(db->MeetingRoom[found_idx],mx_room,"%s",room);
-    snprintf(db->BookingDate[found_idx],mx_date,"%s",date);
-    snprintf(db->BookingTime[found_idx],mx_time,"%s",time);
+
+    store_field(db->BookingID[found_idx], mx_id, id);
+    store_field(db->BookerName[found_idx], mx_name, name);
+    store_field(db->MeetingRoom[found_idx], mx_room, room);
+    store_field(db->BookingDate[found_idx], mx_date, date);
+    store_field(db->BookingTime[found_idx], mx_time, time);
 
     save_all(db,file_name);
 }
@@ -440,22 +664,105 @@ static void clear_screen() {
     fflush(stdout);
 }
 
+
+
+static void run_tests_menu(void) {
+    int running = 1;
+    while (running) {
+        clear_screen();
+        printf(BOLD CYAN "Test Runner\n" RESET);
+        printf("---------------------------------------------\n");
+        printf("(1) Run unit tests\n");
+        printf("(2) Run end-to-end tests\n");
+        printf("(3) Run all tests\n");
+        printf("(0) Back\n");
+        printf("---------------------------------------------\n");
+        printf(YELLOW "type number(0-3) here: " RESET);
+        int choice;
+        if (scanf("%d", &choice) != 1) {
+            int ch;
+            while ((ch = getchar()) != '\n' && ch != EOF) {}
+            printf(BOLD RED "Error: Invalid input. Please enter a number.\n" RESET);
+            printf(YELLOW "Press Enter to continue..." RESET);
+            while ((ch = getchar()) != '\n' && ch != EOF) {}
+            continue;
+        }
+        getchar();
+        clear_screen();
+        switch (choice) {
+            case 1: {
+                int failed = run_unit_tests();
+                if (failed == 0) {
+                    printf(BOLD GREEN "Unit tests completed successfully.\n" RESET);
+                } else {
+                    printf(BOLD RED "Unit tests reported %d failure(s).\n" RESET, failed);
+                }
+                break;
+            }
+            case 2: {
+                int failed = run_e2e_tests();
+                if (failed == 0) {
+                    printf(BOLD GREEN "End-to-end tests completed successfully.\n" RESET);
+                } else {
+                    printf(BOLD RED "End-to-end tests reported %d failure(s).\n" RESET, failed);
+                }
+                break;
+            }
+            case 3: {
+                int failed_unit = run_unit_tests();
+                int failed_e2e = run_e2e_tests();
+                if (failed_unit + failed_e2e == 0) {
+                    printf(BOLD GREEN "All tests completed successfully.\n" RESET);
+                } else {
+                    printf(BOLD RED "See above for failing tests.\n" RESET);
+                }
+                break;
+            }
+            case 0:
+                running = 0;
+                continue;
+            default:
+                printf(BOLD RED "Error: Not match number\n" RESET);
+                break;
+        }
+        if (!running) {
+            break;
+        }
+        printf(YELLOW "Press Enter to continue..." RESET);
+        while (1) {
+            int c = getchar();
+            if (c == '\n' || c == EOF) {
+                break;
+            }
+        }
+    }
+    clear_screen();
+}
+
 static int menu_once(void) {
-    printf(BOLD CYAN"Welcome To CSV Manager\n"RESET);
+    printf(BOLD CYAN"Welcome To Meeting Room Booking Management\n"RESET);
+    printf("---------------------------------------------\n");
+    printf(YELLOW"Rule:\n"RESET);
+    printf("1.You Can Reserve A Meeting Room No More Than 3 Days In Advance\n");
+    printf("2.There Is 4 Room You Can Reserve \"A B C D\" \n");
+    printf("3.Meeting Room Open 24 Hour\n");
+    printf("4.You Cannot Book Two Rooms At The Same Time\n");
+
     printf("---------------------------------------------\n");
     printf("(1) Add user\n");
     printf("(2) Edit user\n");
     printf("(3) Delete user\n");
     printf("(4) Search user\n");
+    printf("(5) Show Data\n");
+    printf("(6) Run Tests\n");
     printf("(0) Quit\n");
     printf("---------------------------------------------\n");
     int choice;
-    printf(YELLOW"type number(0-4) here: "RESET);
+    printf(YELLOW"type number(0-6) here: "RESET);
     scanf("%d",&choice);
     getchar();
     return choice;
 }
-
 void display(DB *db,char *csv){
     int running = 1;
     while(running){
@@ -466,15 +773,20 @@ void display(DB *db,char *csv){
             case 2:edit_user(db,csv);  break;
             case 3:delete_user(db,csv); break;
             case 4:search_user(db); break;
+            case 5:show_log(db); break;
+            case 6:run_tests_menu(); break;
             case 0:running = 0; break;
             default:
-            printf(BOLD RED"Error: Not macth number\n"RESET);
+            printf(BOLD RED"Error: Not match number\n"RESET);
 
         }
         
     }
 }
 int main(){
+#ifdef _WIN32
+    enable_vt_mode();
+#endif
     DB db = {0};
     char CSV[100];
     printf(CYAN"Name of your csv file\n");

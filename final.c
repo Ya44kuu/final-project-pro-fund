@@ -79,7 +79,12 @@ int cmp_slot(const void *a, const void *b){
 }
 
 
-
+//เช็คว่า id เป็นเลขไหม
+int id_num_ch(char* id){
+    if (!*id) return 0;     
+    if(!(strspn(id, "0123456789") == strlen(id))) return 0; 
+    return 1;  
+}
 int ch_time(const char *time ,int *start_m,int *end_m){
     int s_hr,s_min,ed_hr,ed_min;
     if(sscanf(time," %d : %d - %d : %d ",&s_hr,&s_min,&ed_hr,&ed_min) != 4) return 0;
@@ -226,6 +231,13 @@ int validate_booking_datetime(const char *date_str, const char *time_str, char *
 
     
     if (errsz) err[0] = '\0';
+    return 0;
+}
+int has_forbidden_chars(const char *s) {
+    if (!s) return 0;
+    for (const char *p = s; *p; ++p) {
+        if (*p == ',' || *p == '\n') return 1;
+    }
     return 0;
 }
 void show_bookings_for(const DB *db, const char *date, const char *room){
@@ -417,8 +429,7 @@ void add_user(DB *db,char *file_name){
     char *date = db->tmpo[3];
     char *time = db->tmpo[4];
     //เช็ค id เป็นเลขไหม
-    if (!*id) return;     
-    if(!(strspn(id, "0123456789") == strlen(id))){
+    if(!id_num_ch(id)){
         printf(BOLD RED"Error: ID must be number\n");
         return;
     }
@@ -448,7 +459,13 @@ void add_user(DB *db,char *file_name){
             printf(RED BOLD"Error: Invalid Pattern Try Pls Again\n" RESET);
             return;
         }
-    } 
+    }
+    if (has_forbidden_chars(id) || has_forbidden_chars(name) ||
+    has_forbidden_chars(room) || has_forbidden_chars(date) ||
+    has_forbidden_chars(time)) {
+    printf(RED BOLD "Error: Fields must not contain ',' or newline\n" RESET);
+    return;
+} 
     if (space_check(id) || space_check(room) || space_check(date) || space_check(time)) {
         printf(BOLD RED"Error: ID/Room/Date/Time must not contain spaces\n"RESET);
         return;
@@ -521,12 +538,10 @@ void edit_user(DB *db,char *file_name){
     char *date = db->tmpo[3];
     char *time = db->tmpo[4];
 
-    //เช็คว่า id เป็นเลขไหม
-    if (!*id) return;     
-    if(!(strspn(id, "0123456789") == strlen(id))){
+    if(!id_num_ch(id)){
         printf(BOLD RED"Error: ID must be number\n");
         return;
-    }    
+    } 
     //เช็คความถูกต้องของห้อง
     int valid_room = 0;
     char *input= to_lower_str(room);
@@ -553,6 +568,12 @@ void edit_user(DB *db,char *file_name){
             return;
         }
     } 
+    if (has_forbidden_chars(id) || has_forbidden_chars(name) ||
+    has_forbidden_chars(room) || has_forbidden_chars(date) ||
+    has_forbidden_chars(time)) {
+    printf(RED BOLD "Error: Fields must not contain ',' or newline\n" RESET);
+    return;  /* ฟังก์ชันนี้เป็น void ให้ return เปล่า ๆ */
+}
     if (space_check(id) || space_check(room) || space_check(date) || space_check(time)) {
         printf(BOLD RED"Error: ID/Room/Date/Time must not contain spaces\n"RESET);
         return;

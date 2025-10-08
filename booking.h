@@ -36,10 +36,12 @@ typedef struct {
 void save_all(DB *db, char *file_name);
 void show_log(const DB *db);
 char *to_lower_str(const char *s);
+int id_num_ch(char* id);
 int ch_time(const char *time, int *start_m, int *end_m);
 int overlaps(DB *db, const char *name, const char *room, const char *time, const char *date, int exclude_idx);
 void show_bookings_for(const DB *db, const char *date, const char *room);
 void trim(char *s);
+int has_forbidden_chars(const char *s);
 int space_check(char *s);
 int stdin_edit_add(DB *db);
 int stdin_sch(DB *db);

@@ -773,9 +773,10 @@ static int menu_once(void) {
     printf("---------------------------------------------\n");
     printf(YELLOW"Rule:\n"RESET);
     printf("1.You Can Reserve A Meeting Room No More Than 3 Days In Advance\n");
-    printf("2.There Is 4 Room You Can Reserve \"A B C D\" \n");
-    printf("3.Meeting Room Open 24 Hour\n");
-    printf("4.You Cannot Book Two Rooms At The Same Time\n");
+    printf("2.ID Must Be Only Number\n");
+    printf("3.There Is 4 Room You Can Reserve \"A B C D\" \n");
+    printf("4.Meeting Room Open 24 Hour\n");
+    printf("5.You Cannot Book Two Rooms At The Same Time\n");
 
     printf("---------------------------------------------\n");
     printf("(1) Add user\n");

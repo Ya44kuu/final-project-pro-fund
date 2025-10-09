@@ -20,7 +20,7 @@
 #define RESET "\033[0m"
 #define MAGENTA "\033[35m"
 #define RED "\033[31m"
-#define YELLOW "\033[38;5;228m"
+#define YELLOW "\033[38;2;255;255;153m"
 #define GREEN "\033[32m"
 #define WHITE "\033[37m"
 
@@ -49,7 +49,7 @@ int stdin_id_match(DB *db);
 char comfirm_pms(void);
 int search_user(DB *db);
 void add_user(DB *db, char *file_name);
-void edit_user(DB *db, char *file_name);
+void update_user(DB *db, char *file_name);
 void delete_user(DB *db, char *file_name);
 void load_file(DB *db, char *file_name);
 void display(DB *db, char *csv);

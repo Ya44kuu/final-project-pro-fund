@@ -152,22 +152,31 @@ int parse_date_ddmmyyyy(const char *s, struct tm *out_tm, time_t *out_midnight) 
     if (!s || sscanf(s, " %d / %d / %d ", &d, &m, &y) != 3) return 0;
     if (y < 1900 || m < 1 || m > 12 || d < 1) return 0;
 
+
+    int in_year = y - 1900;
+    int in_mon  = m - 1;
+    int in_mday = d;
+
     struct tm t = {0};
-    t.tm_year = y - 1900;
-    t.tm_mon  = m - 1;
-    t.tm_mday = d;
+    t.tm_year = in_year;
+    t.tm_mon  = in_mon;
+    t.tm_mday = in_mday;
     t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
     t.tm_isdst = -1;
 
     time_t tt = mktime(&t);
     if (tt == (time_t)-1) return 0;
 
-    
-    struct tm *chk = localtime(&tt);
-    if (!chk) return 0;
-    if (chk->tm_year != t.tm_year || chk->tm_mon != t.tm_mon || chk->tm_mday != t.tm_mday) return 0;
+    struct tm chk;
+    #ifdef _WIN32
+      localtime_s(&chk, &tt);
+    #else
+      localtime_r(&tt, &chk);
+    #endif
 
-    if (out_tm) *out_tm = *chk;
+    if (chk.tm_year != in_year || chk.tm_mon != in_mon || chk.tm_mday != in_mday) return 0;
+
+    if (out_tm) *out_tm = chk;
     if (out_midnight) *out_midnight = tt;
     return 1;
 }
@@ -524,8 +533,7 @@ void add_user(DB *db,char *file_name){
     store_field(db->BookingTime[idx], mx_time, time);
     save_all(db,file_name);
 }
-void edit_user(DB *db,char *file_name){
-    printf(CYAN"Welcome To Edit User\n");
+void update_user(DB *db,char *file_name){
     int found_idx = search_user(db);
     if (found_idx < 0) return;
 
@@ -771,7 +779,7 @@ static int menu_once(void) {
 
     printf("---------------------------------------------\n");
     printf("(1) Add user\n");
-    printf("(2) Edit user\n");
+    printf("(2) Update user\n");
     printf("(3) Delete user\n");
     printf("(4) Search user\n");
     printf("(5) Show Data\n");
@@ -791,7 +799,7 @@ void display(DB *db,char *csv){
         clear_screen();
         switch (choice){
             case 1:add_user(db,csv);  break;
-            case 2:edit_user(db,csv);  break;
+            case 2:update_user(db,csv);  break;
             case 3:delete_user(db,csv); break;
             case 4:search_user(db); break;
             case 5:show_log(db); break;
@@ -810,7 +818,8 @@ int main(){
 #endif
     DB db = {0};
     char CSV[100];
-    printf(CYAN"Name of your csv file\n");
+    printf(CYAN"Name of your csv file\n"RESET);
+    printf("Ex.Booking.csv\n");
     printf(YELLOW"type here: "RESET);
     fgets(CSV,sizeof(CSV),stdin);
     CSV[strcspn(CSV,"\n")] = '\0';

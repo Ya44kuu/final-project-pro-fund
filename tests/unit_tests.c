@@ -1,7 +1,42 @@
 #include "booking.h"
 #include <assert.h>
 
+
+
+/* ---- silence stdout (Windows/Linux) ---- */
+#ifdef _WIN32
+  #include <io.h>
+  #define dup    _dup
+  #define dup2   _dup2
+  #define fileno _fileno
+  #define close  _close
+  #define DEVNULL "NUL"
+#else
+  #include <unistd.h>
+  #define DEVNULL "/dev/null"
+#endif
+
+typedef struct { int saved_fd; int active; } MuteGuard;
+
+static MuteGuard mute_begin(void){
+    MuteGuard g = { -1, 0 };
+    fflush(stdout);
+    int fd = fileno(stdout);
+    int dupfd = dup(fd);
+    if (dupfd == -1) return g;
+    if (!freopen(DEVNULL, "w", stdout)) { close(dupfd); return g; }
+    g.saved_fd = dupfd; g.active = 1; return g;
+}
+static void mute_end(MuteGuard *g){
+    if (!g || !g->active) return;
+    fflush(stdout);
+    dup2(g->saved_fd, fileno(stdout));
+    close(g->saved_fd);
+    g->saved_fd = -1; g->active = 0;
+}
+#define SILENCE(EXPR) do { MuteGuard __g = mute_begin(); EXPR; mute_end(&__g); } while(0)
 static int g_failed = 0, g_passed = 0;
+
 
 #define CHECK(MSG, COND) \
   do { \
@@ -22,7 +57,16 @@ static int g_failed = 0, g_passed = 0;
          snprintf(out, mx_date, "01/01/1970");
      }
 }
+typedef int (*test_fn)(void);
+typedef struct { const char *name; test_fn fn; } TestCase;
 
+/* Decide per-test pass/fail by delta of g_failed */
+static int run_test_case(const TestCase *tc) {
+    int failed_before = g_failed;
+    (void)tc->fn();                       /* ignore fn's return value */
+    int failed_after  = g_failed;
+    return (failed_after > failed_before) ? 1 : 0;  /* 1 = this test failed */
+}
 static void seed_booking(DB *db, int i,
                          const char *id, const char *name, const char *room,
                          const char *date, const char *time) {
@@ -63,22 +107,10 @@ static void ensure_tests_dir(void){
 #endif
 }
 
-
-typedef int (*test_fn)(void);
-typedef struct { const char *name; test_fn fn; } TestCase;
-
-static int run_test_case(const TestCase *tc){
-    int rc = tc->fn();
-    if (rc==0) printf(BOLD GREEN "✓ " RESET "%s\n\n", tc->name);
-    else       printf(BOLD RED   "✗ " RESET "%s\n\n", tc->name);
-    return rc;
-}
-
 /*-------------- Storage Full ---------------*/
 static int test_add_user_storage_full_(void){
     ensure_tests_dir();
 
-    
     DB db = (DB){0};
     for (int i = 0; i < Row; ++i) {
         snprintf(db.BookingID[i],   mx_id,  "%d", i+1);
@@ -96,33 +128,34 @@ static int test_add_user_storage_full_(void){
     const char *in_path = "tests/tmp_in_full.txt";
 #endif
 
-    
-    write_text_file(in_path,
-        "999999\n"       
-        "New Guy\n"      
-        "A\n"            
-        "01/01/2099\n"   // Date (ไม่สนใจ now ในเทสต์นี้)
-        "10:00-11:00\n"  
-    );
+    /* กันไฟล์ค้างจากรอบก่อน */
+    remove(csv);
 
-    
+    char d[mx_date]; date_plus_days(1, d);
+    char script[256];
+    snprintf(script, sizeof(script),
+        "999999\n"
+        "New Guy\n"
+        "A\n"
+        "%s\n"
+        "10:00-11:00\n", d);
+    write_text_file(in_path, script);
+
     redirect_stdin_from(in_path);
-    add_user(&db, (char*)csv);
+    SILENCE( add_user(&db, (char*)csv) );
     restore_stdin_console();
 
-    
     int last = Row - 1;
     CHECK("no overwrite when full",
           strcmp(db.BookingID[last], "1000") == 0 &&
           strcmp(db.BookerName[last], "User1000") == 0);
 
-    
     FILE *f = fopen(csv,"r");
     CHECK("no file written on full", f == NULL);
     if (f) fclose(f);
-
     return 0;
 }
+
 
 static int test_to_lower_str_(void){
     // Arrange
@@ -232,8 +265,9 @@ static int test_overlaps_(void){
           overlaps(&db,"Alice","A","09:00-10:00","01/10/2099",0)==0);
     return 0;
 }
-/* -------- comma in field-------- */
+/* -------- comma in field: name -------- */
 static int test_add_user_rejects_comma_in_name(void){
+    ensure_tests_dir();
 #ifdef _WIN32
     const char *in  = "tests\\tmp_in_bad_name.txt";
     const char *csv = "tests\\tmp_bad_name.csv";
@@ -241,38 +275,35 @@ static int test_add_user_rejects_comma_in_name(void){
     const char *in  = "tests/tmp_in_bad_name.txt";
     const char *csv = "tests/tmp_bad_name.csv";
 #endif
-#ifdef _WIN32
-    system("if not exist tests mkdir tests >nul 2>nul");
-#else
-    system("mkdir -p tests >/dev/null 2>&1");
-#endif
+
     DB db = (DB){0};
-
-
-    char script[256];
+    remove(csv);  /* กันไฟล์ค้าง */
 
     char d[mx_date]; date_plus_days(1, d);
+    char script[256];
     snprintf(script, sizeof(script),
         "100\n"
-        "Ali,ce\n"   /*(error) */
+        "Ali,ce\n"   /* error: มี comma */
         "A\n"
         "%s\n"
         "09:00-10:00\n", d);
     write_text_file(in, script);
 
     redirect_stdin_from(in);
-    add_user(&db, (char*)csv);
+    SILENCE( add_user(&db, (char*)csv) );
     restore_stdin_console();
 
     CHECK("rejects comma in name (no DB write)", db.BookingID[0][0]=='\0');
-
     FILE *f = fopen(csv,"r");
     CHECK("rejects comma -> no file created", f==NULL);
     if (f) fclose(f);
     return 0;
 }
 
+
+
 static int test_add_user_rejects_comma_in_id(void){
+    ensure_tests_dir();
 #ifdef _WIN32
     const char *in  = "tests\\tmp_in_bad_id.txt";
     const char *csv = "tests\\tmp_bad_id.csv";
@@ -280,17 +311,14 @@ static int test_add_user_rejects_comma_in_id(void){
     const char *in  = "tests/tmp_in_bad_id.txt";
     const char *csv = "tests/tmp_bad_id.csv";
 #endif
-#ifdef _WIN32
-    system("if not exist tests mkdir tests >nul 2>nul");
-#else
-    system("mkdir -p tests >/dev/null 2>&1");
-#endif
-    DB db = (DB){0};
-    char d[mx_date]; date_plus_days(1, d);
 
+    DB db = (DB){0};
+    remove(csv);  /* กันไฟล์ค้าง */
+
+    char d[mx_date]; date_plus_days(1, d);
     char script[256];
     snprintf(script, sizeof(script),
-        "1,00\n"     /*(error) */
+        "1,00\n"     /* error: มี comma ใน ID */
         "Alice\n"
         "A\n"
         "%s\n"
@@ -298,7 +326,7 @@ static int test_add_user_rejects_comma_in_id(void){
     write_text_file(in, script);
 
     redirect_stdin_from(in);
-    add_user(&db, (char*)csv);
+    SILENCE( add_user(&db, (char*)csv) );
     restore_stdin_console();
 
     CHECK("rejects comma in id (no DB write)", db.BookingID[0][0]=='\0');
@@ -326,10 +354,10 @@ static int test_save_load_show_(void){
     load_file(&db2,(char*)csv);
 
     // Assert
-    CHECK("round-trip row0 id/name", strcmp(db2.BookingID[0],"S1")==0 && strcmp(db2.BookerName[0],"Sam")==0);
-    CHECK("round-trip row1 time",    strcmp(db2.BookingTime[1],"10:00-11:00")==0);
+    CHECK("Loaded row 0 matches: ID=S1 and Name=Sam", strcmp(db2.BookingID[0],"S1")==0 && strcmp(db2.BookerName[0],"Sam")==0);
+    CHECK("Loaded row 1 time is 10:00-11:00",        strcmp(db2.BookingTime[1],"10:00-11:00")==0);
 
-    show_bookings_for(&db2,"01/01/2099","A");
+    SILENCE( show_bookings_for(&db2,"01/01/2099","A") );
     return 0;
 }
 
@@ -350,59 +378,63 @@ static int test_search_user_ui_(void){
     restore_stdin_console();
 
     // Assert
-    CHECK("search_user returns found index 0", idx==0);
+    CHECK("Searching by 'Ali' selects booking with ID ID1 (idx must be index 0)", idx==0);
     return 0;
 }
 
 static int test_add_user_ui_(void){
     ensure_tests_dir();
 
-    // Arrange
     DB db = (DB){0};
-    char d[mx_date]; date_plus_days(1, d); // พรุ่งนี้ 
-    const char *in_path = "tests/tmp_in_add.txt";
-    char script[256];
-    snprintf(script,sizeof(script),
-        "U001\n"      
-        "Alice\n"     
-        "A\n"         
-        "%s\n"        
-        "09:00-10:00\n", d); 
-    write_text_file(in_path, script);
 
 #ifdef _WIN32
-    const char *csv = "tests\\tmp_add.csv";
+    const char *in_path = "tests\\tmp_in_add.txt";
+    const char *csv     = "tests\\tmp_add.csv";
 #else
-    const char *csv = "tests/tmp_add.csv";
+    const char *in_path = "tests/tmp_in_add.txt";
+    const char *csv     = "tests/tmp_add.csv";
 #endif
 
-    // Act
+    remove(csv);  /* กันไฟล์ค้าง */
+
+    char d[mx_date]; date_plus_days(1, d);  /* พรุ่งนี้: ผ่านกฎ 3 วัน */
+    char script[256];
+    snprintf(script,sizeof(script),
+        "1001\n"
+        "Alice\n"
+        "A\n"
+        "%s\n"
+        "09:00-10:00\n", d);
+    write_text_file(in_path, script);
+
     redirect_stdin_from(in_path);
-    add_user(&db,(char*)csv);
+    SILENCE( add_user(&db,(char*)csv) );
     restore_stdin_console();
 
-    // Assert
-    CHECK("add_user wrote id/name", strcmp(db.BookingID[0],"U001")==0 && strcmp(db.BookerName[0],"Alice")==0);
+    CHECK("Added booking successfully: ID=1001, Name=Alice",
+          strcmp(db.BookingID[0],"1001")==0 && strcmp(db.BookerName[0],"Alice")==0);
     return 0;
 }
 
-static int test_edit_user_ui_(void){
+static int test_update_user_ui_(void){
     ensure_tests_dir();
 
     // Arrange
     DB db = (DB){0};
     char d[mx_date]; date_plus_days(1, d);
-    seed_booking(&db,0,"U001","Alice","A",d,"09:00-10:00");
+    seed_booking(&db,0,"1001","Alice","A",d,"09:00-10:00");
     const char *in_path = "tests/tmp_in_edit.txt";
     char script[512];
+
     snprintf(script,sizeof(script),
-        "Alice\n"       
-        "U001\n"        
-        "U001\n"        
-        "Alice\n"       
-        "A\n"           
+        "Alice\n"  
+              
+        "1001\n"         
+        "Alice\n"        
+        "A\n"            
         "%s\n"           
-        "10:00-11:00\n", d);
+        "10:00-11:00\n", 
+        d);
     write_text_file(in_path, script);
 
 #ifdef _WIN32
@@ -413,11 +445,11 @@ static int test_edit_user_ui_(void){
 
     // Act
     redirect_stdin_from(in_path);
-    edit_user(&db,(char*)csv);
+    SILENCE( update_user(&db,(char*)csv) );
     restore_stdin_console();
 
     // Assert
-    CHECK("edit_user changed time", strcmp(db.BookingTime[0],"10:00-11:00")==0);
+    CHECK("Update booking time updated to 10:00-11:00",strcmp(db.BookingTime[0],"10:00-11:00")==0);
     return 0;
 }
 
@@ -428,7 +460,7 @@ static int test_delete_user_ui_(void){
     DB db = (DB){0};
     seed_booking(&db,0,"D001","Dave","A","01/01/2099","09:00-10:00");
     const char *in_path = "tests/tmp_in_delete.txt";
-    write_text_file(in_path, "Dave\nD001\ny\n");
+    write_text_file(in_path, "Dave\ny\n");
 
 #ifdef _WIN32
     const char *csv = "tests\\tmp_delete.csv";
@@ -442,9 +474,10 @@ static int test_delete_user_ui_(void){
     restore_stdin_console();
 
     // Assert
-    CHECK("delete_user clears row0",
-          db.BookingID[0][0]=='\0' && db.BookerName[0][0]=='\0' &&
-          db.MeetingRoom[0][0]=='\0' && db.BookingTime[0][0]=='\0');
+
+    CHECK("Deleted booking removed all fields in row 0",
+        db.BookingID[0][0]=='\0' && db.BookerName[0][0]=='\0' &&
+        db.MeetingRoom[0][0]=='\0' && db.BookingTime[0][0]=='\0');
     return 0;
 }
 
@@ -465,27 +498,45 @@ int run_unit_tests(void){
         {"validate_booking_datetime",  test_validate_booking_datetime_},
         {"overlaps",                   test_overlaps_},
         {"comma in name",              test_add_user_rejects_comma_in_name},
-        {"comma in id",                 test_add_user_rejects_comma_in_id},
+        {"comma in id",                test_add_user_rejects_comma_in_id},
 
         {"save/load/show",             test_save_load_show_},
-        {"search_user",      test_search_user_ui_},
-        {"add_user",         test_add_user_ui_},
-        {"edit_user",        test_edit_user_ui_},
-        {"delete_user",      test_delete_user_ui_},
+        {"search_user",                test_search_user_ui_},
+        {"add_user",                   test_add_user_ui_},
+        {"update_user",                  test_update_user_ui_},
+        {"delete_user",                test_delete_user_ui_},
     };
 
-    int failed = 0;
-    for (size_t i=0;i<sizeof(cases)/sizeof(cases[0]);++i){
-        failed += run_test_case(&cases[i]);
+    int suite_failed = 0;
+
+    for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); ++i) {
+        const TestCase *tc = &cases[i];
+
+        printf(BOLD WHITE "[%zu/%zu] %s\n" RESET,
+            i+1, sizeof(cases)/sizeof(cases[0]), tc->name);
+
+        int this_failed = run_test_case(tc);  /* ← ใช้ฟังก์ชันที่ตัดสินจาก CHECK counters */
+
+        if (this_failed) {
+            ++suite_failed;
+            printf(RED   "  -> TEST FAILED\n" RESET);
+        } else {
+            printf(GREEN "  -> TEST PASSED\n" RESET);
+        }
+        printf("\n");
     }
 
-    printf("\n");
-    if (failed==0){
-        printf(BOLD GREEN "All unit tests passed!  " RESET "(%d checks passed)\n", g_passed);
-        g_passed = 0;
+    if (suite_failed == 0) {
+        printf(BOLD GREEN "All unit tests passed! " RESET
+               "(%d checks passed, %d failed)\n", g_passed, g_failed);
     } else {
-        printf(BOLD RED "%d unit test(s) failed. " RESET "(%d checks passed, %d failed)\n", failed, g_passed, g_failed);
-        g_passed = 0; g_failed = 0;
+        printf(BOLD RED "%d unit test(s) failed. " RESET
+               "(%d checks passed, %d failed)\n", suite_failed, g_passed, g_failed);
     }
-    return failed;
+
+    g_passed = 0;
+    g_failed = 0;
+
+    return suite_failed;
 }
+
